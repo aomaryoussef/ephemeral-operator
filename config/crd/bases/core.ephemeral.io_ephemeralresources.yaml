@@ -1,0 +1,35 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: ephemeralresources.core.ephemeral.io
+spec:
+  group: core.ephemeral.io
+  names:
+    kind: EphemeralResource
+    plural: ephemeralresources
+    singular: ephemeralresource
+    shortNames:
+    - er
+  scope: Namespaced
+  versions:
+    - name: v1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              properties:
+                ttlSeconds:
+                  type: integer
+                resources:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      kind:
+                        type: string
+                      name:
+                        type: string

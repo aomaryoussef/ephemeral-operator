@@ -1,84 +1,83 @@
-/*
-Copyright 2024 btechlabs.
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-*/
-
-package controller
+package controllers
 
 import (
 	"context"
+	"fmt"
+	"time"
 
-	. "github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega"
-	"k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/types"
-	"sigs.k8s.io/controller-runtime/pkg/reconcile"
-
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
+	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/manager"
+	"sigs.k8s.io/controller-runtime/pkg/runtime/inject"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
+	"sigs.k8s.io/controller-runtime/pkg/source"
 
-	corev1 "github.com/aomaryoussef/ephemeral-operator.git/api/v1"
+	v1 "github.com/aomaryoussef/ephemeral-operator/api/v1"
 )
 
-var _ = Describe("EphemeralResource Controller", func() {
-	Context("When reconciling a resource", func() {
-		const resourceName = "test-resource"
+// EphemeralResourceReconciler reconciles a EphemeralResource object
+type EphemeralResourceReconciler struct {
+	client.Client
+}
 
-		ctx := context.Background()
+// +kubebuilder:rbac:groups=core.example.com,resources=ephemeralresources,verbs=get;list;create;update;patch;delete
 
-		typeNamespacedName := types.NamespacedName{
-			Name:      resourceName,
-			Namespace: "default", // TODO(user):Modify as needed
-		}
-		ephemeralresource := &corev1.EphemeralResource{}
+// Reconcile reads that state of the cluster for a EphemeralResource object and makes changes based on the state read
+// and what is in the EphemeralResource.Spec
+func (r *EphemeralResourceReconciler) Reconcile(ctx context.Context, req reconcile.Request) (reconcile.Result, error) {
+	// Fetch the EphemeralResource instance
+	ephemeralResource := &v1.EphemeralResource{}
+	err := r.Get(ctx, req.NamespacedName, ephemeralResource)
+	if err != nil {
+		return reconcile.Result{}, err
+	}
 
-		BeforeEach(func() {
-			By("creating the custom resource for the Kind EphemeralResource")
-			err := k8sClient.Get(ctx, typeNamespacedName, ephemeralresource)
-			if err != nil && errors.IsNotFound(err) {
-				resource := &corev1.EphemeralResource{
-					ObjectMeta: metav1.ObjectMeta{
-						Name:      resourceName,
-						Namespace: "default",
-					},
-					// TODO(user): Specify other spec details if needed.
+	// Check if the TTL has expired
+	if ephemeralResource.Spec.TTLSeconds < time.Now().Unix() {
+		for _, res := range ephemeralResource.Spec.Resources {
+			// Here, we assume the resources are Deployments or Secrets for simplicity.
+			// Handle deletion logic for each resource
+			if res.Kind == "Deployment" {
+				deployment := &corev1.Deployment{}
+				err := r.Get(ctx, client.ObjectKey{
+					Namespace: req.Namespace,
+					Name:      res.Name,
+				}, deployment)
+				if err == nil {
+					err = r.Delete(ctx, deployment)
+					if err != nil {
+						return reconcile.Result{}, fmt.Errorf("failed to delete deployment %s: %v", res.Name, err)
+					}
 				}
-				Expect(k8sClient.Create(ctx, resource)).To(Succeed())
+			} else if res.Kind == "Secret" {
+				secret := &corev1.Secret{}
+				err := r.Get(ctx, client.ObjectKey{
+					Namespace: req.Namespace,
+					Name:      res.Name,
+				}, secret)
+				if err == nil {
+					err = r.Delete(ctx, secret)
+					if err != nil {
+						return reconcile.Result{}, fmt.Errorf("failed to delete secret %s: %v", res.Name, err)
+					}
+				}
 			}
-		})
+		}
+	}
 
-		AfterEach(func() {
-			// TODO(user): Cleanup logic after each test, like removing the resource instance.
-			resource := &corev1.EphemeralResource{}
-			err := k8sClient.Get(ctx, typeNamespacedName, resource)
-			Expect(err).NotTo(HaveOccurred())
+	return reconcile.Result{}, nil
+}
 
-			By("Cleanup the specific resource instance EphemeralResource")
-			Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
-		})
-		It("should successfully reconcile the resource", func() {
-			By("Reconciling the created resource")
-			controllerReconciler := &EphemeralResourceReconciler{
-				Client: k8sClient,
-				Scheme: k8sClient.Scheme(),
-			}
-
-			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
-				NamespacedName: typeNamespacedName,
-			})
-			Expect(err).NotTo(HaveOccurred())
-			// TODO(user): Add more specific assertions depending on your controller's reconciliation logic.
-			// Example: If you expect a certain status condition after reconciliation, verify it here.
-		})
-	})
-})
+// SetupWithManager sets up the controller with the Manager.
+func (r *EphemeralResourceReconciler) SetupWithManager(mgr manager.Manager) error {
+	return ctrl.NewControllerManagedBy(mgr).
+		For(&v1.EphemeralResource{}).
+		Owns(&corev1.Deployment{}).
+		Owns(&corev1.Secret{}).
+		Complete(r)
+}

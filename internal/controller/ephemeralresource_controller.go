@@ -4,83 +4,79 @@ import (
 	"context"
 	"fmt"
 	"time"
-// Kubernetes API imports
+
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	appsv1 "k8s.io/api/apps/v1"
-
-	// Kubebuilder runtime and controller
-	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/reconcile"
-
-	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
+	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/manager"
+	"sigs.k8s.io/controller-runtime/pkg/runtime/inject"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/source"
 
-	ephemeralv1 "github.com/aomaryoussef/ephemeral-operator/api/v1"
+	v1 "github.com/aomaryoussef/ephemeral-operator/api/v1"
 )
 
-// EphemeralResourceReconciler reconciles an EphemeralResource object
+// EphemeralResourceReconciler reconciles a EphemeralResource object
 type EphemeralResourceReconciler struct {
 	client.Client
-	Scheme *runtime.Scheme
 }
 
-// Reconcile is the main reconciliation loop
+// +kubebuilder:rbac:groups=core.example.com,resources=ephemeralresources,verbs=get;list;create;update;patch;delete
+
+// Reconcile reads that state of the cluster for a EphemeralResource object and makes changes based on the state read
+// and what is in the EphemeralResource.Spec
 func (r *EphemeralResourceReconciler) Reconcile(ctx context.Context, req reconcile.Request) (reconcile.Result, error) {
 	// Fetch the EphemeralResource instance
-	var ephemeralResource ephemeralv1.EphemeralResource
-	if err := r.Get(ctx, req.NamespacedName, &ephemeralResource); err != nil {
-		return reconcile.Result{}, client.IgnoreNotFound(err)
+	ephemeralResource := &v1.EphemeralResource{}
+	err := r.Get(ctx, req.NamespacedName, ephemeralResource)
+	if err != nil {
+		return reconcile.Result{}, err
 	}
 
-	// Check if TTL has exceeded the defined limit
-	if time.Since(ephemeralResource.Status.LastModified.Time).Seconds() > float64(ephemeralResource.Spec.TTLSeconds) {
-		// Delete resources that exceed TTL
-		for _, resource := range ephemeralResource.Spec.Resources {
-			if err := r.deleteResource(ctx, resource); err != nil {
-				return reconcile.Result{}, err
+	// Check if the TTL has expired
+	if ephemeralResource.Spec.TTLSeconds < time.Now().Unix() {
+		for _, res := range ephemeralResource.Spec.Resources {
+			// Here, we assume the resources are Deployments or Secrets for simplicity.
+			// Handle deletion logic for each resource
+			if res.Kind == "Deployment" {
+				deployment := &corev1.Deployment{}
+				err := r.Get(ctx, client.ObjectKey{
+					Namespace: req.Namespace,
+					Name:      res.Name,
+				}, deployment)
+				if err == nil {
+					err = r.Delete(ctx, deployment)
+					if err != nil {
+						return reconcile.Result{}, fmt.Errorf("failed to delete deployment %s: %v", res.Name, err)
+					}
+				}
+			} else if res.Kind == "Secret" {
+				secret := &corev1.Secret{}
+				err := r.Get(ctx, client.ObjectKey{
+					Namespace: req.Namespace,
+					Name:      res.Name,
+				}, secret)
+				if err == nil {
+					err = r.Delete(ctx, secret)
+					if err != nil {
+						return reconcile.Result{}, fmt.Errorf("failed to delete secret %s: %v", res.Name, err)
+					}
+				}
 			}
 		}
-	}
-
-	// Update the LastModified field to track when this reconciliation happened
-	ephemeralResource.Status.LastModified = metav1.NewTime(time.Now())
-	if err := r.Status().Update(ctx, &ephemeralResource); err != nil {
-		return reconcile.Result{}, err
 	}
 
 	return reconcile.Result{}, nil
 }
 
-// deleteResource deletes a Kubernetes resource like Deployment, Secret, etc.
-func (r *EphemeralResourceReconciler) deleteResource(ctx context.Context, resource ephemeralv1.ResourceRef) error {
-	// Get the resource by its kind and name
-	switch resource.Kind {
-	case "Deployment":
-		var deployment appsv1.Deployment
-		if err := r.Get(ctx, client.ObjectKey{Name: resource.Name}, &deployment); err != nil {
-			return err
-		}
-		return r.Delete(ctx, &deployment)
-	case "Secret":
-		var secret corev1.Secret
-		if err := r.Get(ctx, client.ObjectKey{Name: resource.Name}, &secret); err != nil {
-			return err
-		}
-		return r.Delete(ctx, &secret)
-	default:
-		return fmt.Errorf("unsupported resource kind: %s", resource.Kind)
-	}
-}
-
-// SetupWithManager sets up the controller with the Manager
-func (r *EphemeralResourceReconciler) SetupWithManager(mgr ctrl.Manager) error {
+// SetupWithManager sets up the controller with the Manager.
+func (r *EphemeralResourceReconciler) SetupWithManager(mgr manager.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&ephemeralv1.EphemeralResource{}).
+		For(&v1.EphemeralResource{}).
 		Owns(&corev1.Deployment{}).
 		Owns(&corev1.Secret{}).
 		Complete(r)

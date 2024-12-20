@@ -1,6 +1,4 @@
-// +kubebuilder:object:root=true
-// +kubebuilder:subresource:status
-
+// api/v1/ephemeralresource_types.go
 package v1
 
 import (
@@ -9,30 +7,25 @@ import (
 
 // EphemeralResourceSpec defines the desired state of EphemeralResource
 type EphemeralResourceSpec struct {
-	// TTL in seconds. Resources exceeding this TTL will be deleted
-	// +kubebuilder:validation:Minimum=0
-	TTLSeconds int32 `json:"ttlSeconds"`
-
-	// Resources defines the list of resources (like Deployments, Secrets) to monitor
-	Resources []ResourceRef `json:"resources"`
+	TTLSeconds int64 `json:"ttlSeconds,omitempty"`
+	Resources  []Resource `json:"resources"`
 }
 
-// ResourceRef defines a reference to a Kubernetes resource
-type ResourceRef struct {
-	// The kind of the resource (e.g., Deployment, Secret)
+// Resource defines a Kubernetes resource to be managed (e.g., Deployment, Secret)
+type Resource struct {
 	Kind string `json:"kind"`
-
-	// The name of the resource
 	Name string `json:"name"`
 }
 
 // EphemeralResourceStatus defines the observed state of EphemeralResource
 type EphemeralResourceStatus struct {
-	// Keep track of the time when the resource was created or last modified
-	LastModified metav1.Time `json:"lastModified"`
+	// Add any observed state here.
+	// Example:
+	// LastChecked metav1.Time `json:"lastChecked,omitempty"`
 }
 
 // +kubebuilder:object:root=true
+// +kubebuilder:subresource:status
 
 // EphemeralResource is the Schema for the ephemeralresources API
 type EphemeralResource struct {
